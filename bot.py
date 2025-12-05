@@ -10,13 +10,14 @@ import random
 import sqlite3
 import datetime
 import base64
+import sys
 from pathlib import Path
 from telethon import TelegramClient, events, utils, Button
 from telethon.tl.types import DocumentAttributeFilename, InputFile, InputFileBig
 from telethon.tl.functions.upload import SaveFilePartRequest, SaveBigFilePartRequest
 
 # ═══════════════════════════════════════════════════════════════════
-#    SUPER BOT v13.0 (LINUX NATIVE EDITION)
+#    SUPER BOT v13.1 (LINUX UNIVERSAL FIX)
 # ═══════════════════════════════════════════════════════════════════
 
 logging.basicConfig(format='%(asctime)s | %(levelname)s | %(message)s', level=logging.INFO)
@@ -33,14 +34,14 @@ BOT_TOKEN = '8569421664:AAFSO-PLDzZ5WktO7nM60Uwflo_C6AZDWwk'
 # ID DEL ADMIN
 ADMIN_ID = 5338241603  
 
-# Directorios (Linux usa rutas absolutas)
+# Directorios (Rutas Absolutas Linux)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DOWNLOAD_PATH = os.path.join(BASE_DIR, 'downloads')
 
 MAX_TG_SIZE = 2000 * 1024 * 1024  # 2000 MB
 
 # ⚡ CONFIGURACIÓN LINUX ⚡
-UPLOAD_WORKERS = 20      
+UPLOAD_WORKERS = 16
 PART_SIZE_KB = 512       
 
 Path(DOWNLOAD_PATH).mkdir(parents=True, exist_ok=True)
@@ -49,23 +50,37 @@ Path(DOWNLOAD_PATH).mkdir(parents=True, exist_ok=True)
 ARIA2_RPC_PORT = 6800
 ARIA2_SECRET = "mysecrettoken"
 
-# Cancel Flags
 CANCEL_FLAGS = {}
 
-# Estilos
 STYLE = {
-    'title': '═' * 30, 'line': '─' * 30, 'rocket': '🚀', 'check': '✅', 'cross': '❌', 
-    'arrow': '➜', 'download': '📥', 'upload': '📤', 'file': '📄', 'folder': '📂',
-    'speed': '⚡', 'time': '⏱', 'size': '💾', 'admin': '👮‍♂️', 'success': '🎉', 
-    'error': '⛔', 'loading': '🔄', 'queue': '⏳', 'split': '✂️', 'warn': '⚠️', 
-    'quota': '📊', 'lock': '🔒', 'bullet': '➤', 'cancel': '🚫'
+    'title': '=' * 30, 'line': '-' * 30, 'rocket': '[RUN]', 
+    'check': '[OK]', 'cross': '[X]', 'arrow': '->', 
+    'download': '[DOWN]', 'upload': '[UP]', 'file': '[FILE]', 
+    'speed': '[SPD]', 'time': '[TIME]', 'size': '[SIZE]', 
+    'admin': '[ADM]', 'success': '[DONE]', 'error': '[ERR]', 
+    'loading': '[...]', 'queue': '[Q]', 'split': '[CUT]', 
+    'warn': '[!]', 'quota': '[%]', 'lock': '[LOCK]', 'cancel': '[STOP]'
 }
 
-# Base de Datos
 db_path = "database.db"
 
 # ═══════════════════════════════════════════════════════════════════
-#                     GESTOR DE BASE DE DATOS
+#                     MANEJO DE CIERRE (LINUX)
+# ═══════════════════════════════════════════════════════════════════
+def force_kill_processes():
+    try:
+        subprocess.run("pkill -9 aria2c", shell=True)
+    except: pass
+
+def signal_handler(sig, frame):
+    print(f"\nAPAGANDO...")
+    force_kill_processes()
+    sys.exit(0) 
+
+signal.signal(signal.SIGINT, signal_handler)
+
+# ═══════════════════════════════════════════════════════════════════
+#                     BASE DE DATOS
 # ═══════════════════════════════════════════════════════════════════
 class Database:
     def __init__(self):
@@ -137,29 +152,41 @@ class Aria2Downloader:
     def start_aria2(self):
         if self.is_running(): return True
         
-        # Verificar si está instalado en el sistema
         if not shutil.which('aria2c'):
-            print("❌ Error: aria2c no está instalado. Ejecuta: sudo apt install aria2")
+            print("❌ Error: aria2c no instalado. Ejecuta: sudo apt install aria2")
             return False
             
         try:
-            # COMANDO NATIVO LINUX (DAEMON)
+            # Matar procesos viejos para limpiar puertos
+            subprocess.run("pkill -9 aria2c", shell=True)
+            time.sleep(1)
+
+            # COMANDO PURO Y LIMPIO PARA CUALQUIER VERSIÓN DE LINUX
             cmd = [
                 'aria2c',
                 '--enable-rpc',
+                '--rpc-listen-all=false',
                 f'--rpc-listen-port={ARIA2_RPC_PORT}',
                 f'--rpc-secret={ARIA2_SECRET}',
                 f'--dir={DOWNLOAD_PATH}',
-                '--daemon=true',  # ESTO ES CLAVE EN LINUX
+                '--daemon=true',  # Modo Demonio
+                '--no-conf',      # IGNORAR ARCHIVOS CONF VIEJOS (ESTO ARREGLA TU ERROR)
                 '--max-connection-per-server=16',
                 '--split=16',
-                '--file-allocation=falloc',
                 '--quiet=true',
                 '--allow-overwrite=true'
             ]
             subprocess.Popen(cmd)
-            time.sleep(2) # Esperar a que arranque
-            return self.is_running()
+            
+            # Esperar a que inicie
+            for _ in range(5):
+                time.sleep(1)
+                if self.is_running(): 
+                    print("✅ Aria2 iniciado correctamente.")
+                    return True
+            
+            print("❌ Aria2 no respondió.")
+            return False
         except Exception as e:
             print(f"Error starting aria2: {e}")
             return False
@@ -199,19 +226,19 @@ def format_size(size_bytes):
     else: return f"{size_bytes/1024**3:.2f} GB"
 
 def format_time(seconds):
+    if seconds <= 0: return "0s"
     if seconds < 60: return f"{int(seconds)}s"
     elif seconds < 3600: return f"{int(seconds//60)}m {int(seconds%60)}s"
     else: return f"{int(seconds//3600)}h {int((seconds%3600)//60)}m"
 
 def create_bar(percentage):
     filled = int(percentage / 10) 
-    return '█' * filled + '▒' * (10 - filled)
+    return '█' * filled + '░' * (10 - filled)
 
 def split_file_sync(file_path, chunk_size=MAX_TG_SIZE):
     parts = []
     file_size = os.path.getsize(file_path)
     if file_size <= chunk_size: return [file_path]
-    
     part_num = 1
     with open(file_path, 'rb') as f:
         while True:
@@ -304,7 +331,7 @@ async def upload_file(client, chat_id, path, msg, name, header="", user_id=None)
         if not input_file: return False 
         await client.send_file(chat_id, input_file, caption=f"{STYLE['file']} `{name}`", force_document=True, attributes=[DocumentAttributeFilename(name)])
         return True
-    except: return False
+    except Exception as e: return False
 
 # ═══════════════════════════════════════════════════════════════════
 #                     PROCESAMIENTO
@@ -456,17 +483,14 @@ def get_admin_keyboard(): return [[Button.text("/users"), Button.text("/help_adm
 def get_user_keyboard(): return [[Button.text("/miplan"), Button.text("/support")]]
 
 async def main():
-    try:
-        import cryptg; crypt_msg = f"{STYLE['check']} Cryptg: ACTIVO"
+    try: import cryptg; crypt_msg = f"{STYLE['check']} Cryptg: ACTIVO"
     except: crypt_msg = f"{STYLE['warn']} Cryptg: FALTA"
-    print(f"\n{STYLE['title']}\n   {STYLE['rocket']} BOT v13.0 LINUX\n   {crypt_msg}\n{STYLE['title']}\n")
+    print(f"\n{STYLE['title']}\n   {STYLE['rocket']} BOT v13.1 LINUX (UNIVERSAL)\n   {crypt_msg}\n{STYLE['title']}\n")
     
     aria2 = Aria2Downloader()
     if not aria2.is_running():
-        # Intento final de arranque
-        print("Intentando revivir Aria2...")
         if not aria2.start_aria2():
-            print("ERROR: No se pudo iniciar Aria2. Revisa la instalación.")
+            print("ERROR FATAL: Aria2 no arranca.")
             return
 
     client = TelegramClient('linux_bot', API_ID, API_HASH)
@@ -528,7 +552,6 @@ async def main():
     async def handler(e):
         if not db.check_quota(e.sender_id): return
         
-        # Archivo .torrent
         if e.document and e.file.name and e.file.name.lower().endswith('.torrent'):
             pos = queue.qsize() + 1
             if pos > 1: await e.respond(f"**{STYLE['queue']} En cola: #{pos}**")
