@@ -1,24 +1,32 @@
-import os
-import time
 import asyncio
 import logging
-import subprocess
+
+# ═══════════════════════════════════════════════════════════════════
+#      PARCHE SISTEMA
+# ═══════════════════════════════════════════════════════════════════
+if not hasattr(asyncio, 'coroutine'):
+    def _coroutine(func): return func
+    asyncio.coroutine = _coroutine
+
+import os
+import time
 import math
-import requests
-import shutil
 import random
 import sqlite3
 import datetime
-import base64
-import sys
+import requests
 import signal
+import sys
+import subprocess
+import shutil
+import base64
 from pathlib import Path
 from telethon import TelegramClient, events, utils, Button
 from telethon.tl.types import DocumentAttributeFilename, InputFile, InputFileBig
 from telethon.tl.functions.upload import SaveFilePartRequest, SaveBigFilePartRequest
 
 # ═══════════════════════════════════════════════════════════════════
-#    SUPER BOT v15.0 (LINUX PURE EDITION)
+#    SUPER BOT v16.0 TITAN (LINUX STABLE + TRACKER INJECTION)
 # ═══════════════════════════════════════════════════════════════════
 
 logging.basicConfig(format='%(asctime)s | %(levelname)s | %(message)s', level=logging.INFO)
@@ -32,18 +40,17 @@ API_ID = 18693993
 API_HASH = '382ee6b53bdd0df66a52ea9779c62424'
 BOT_TOKEN = '8569421664:AAFSO-PLDzZ5WktO7nM60Uwflo_C6AZDWwk'
 
-# ID DEL ADMIN (CAMBIAR POR TU ID)
+# ID DEL ADMIN
 ADMIN_ID = 5338241603  
 
-# Directorios (Rutas Linux)
+# Directorios (Rutas Absolutas Linux)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DOWNLOAD_PATH = os.path.join(BASE_DIR, 'downloads')
 
 MAX_TG_SIZE = 2000 * 1024 * 1024  # 2GB
-UPLOAD_WORKERS = 20      
+UPLOAD_WORKERS = 16 # Estabilidad en Linux
 PART_SIZE_KB = 512       
 
-# Crear carpeta si no existe
 if not os.path.exists(DOWNLOAD_PATH):
     os.makedirs(DOWNLOAD_PATH)
 
@@ -63,30 +70,6 @@ STYLE = {
 }
 
 db_path = "database.db"
-
-# ═══════════════════════════════════════════════════════════════════
-#                     MANEJO DE SEÑALES (LINUX)
-# ═══════════════════════════════════════════════════════════════════
-def cleanup_linux():
-    """Mata procesos de aria2 y limpia temporales"""
-    print(f"\n{STYLE['cross']} DETENIENDO SERVICIOS...")
-    try:
-        subprocess.run(["pkill", "-9", "aria2c"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except: pass
-    
-    # Limpiar carpeta downloads
-    try:
-        if os.path.exists(DOWNLOAD_PATH):
-            shutil.rmtree(DOWNLOAD_PATH)
-            os.makedirs(DOWNLOAD_PATH)
-    except: pass
-
-def signal_handler(sig, frame):
-    cleanup_linux()
-    sys.exit(0) 
-
-# Registrar señal de CTRL+C
-signal.signal(signal.SIGINT, signal_handler)
 
 # ═══════════════════════════════════════════════════════════════════
 #                     BASE DE DATOS
@@ -139,7 +122,7 @@ class Database:
 db = Database()
 
 # ═══════════════════════════════════════════════════════════════════
-#                     ARIA2 DOWNLOADER (LINUX)
+#                     ARIA2 DOWNLOADER (TITAN CORE)
 # ═══════════════════════════════════════════════════════════════════
 class Aria2Downloader:
     def __init__(self):
@@ -165,12 +148,11 @@ class Aria2Downloader:
     def start_aria2(self):
         if self.is_running(): return True
         
-        # Limpieza previa
-        subprocess.run(["pkill", "-9", "aria2c"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # Kill forzado
+        subprocess.run("pkill -9 aria2c", shell=True, stderr=subprocess.DEVNULL)
         time.sleep(1)
         
         try:
-            # COMANDO PURO LINUX
             cmd = [
                 'aria2c',
                 '--enable-rpc',
@@ -182,7 +164,7 @@ class Aria2Downloader:
                 '--no-conf',
                 '--max-connection-per-server=16',
                 '--split=16',
-                '--file-allocation=falloc',
+                '--file-allocation=none', # Falloc a veces falla en contenedores
                 '--quiet=true',
                 '--allow-overwrite=true',
                 '--bt-max-peers=0',
@@ -194,9 +176,7 @@ class Aria2Downloader:
                 time.sleep(1)
                 if self.is_running(): return True
             return False
-        except Exception as e:
-            print(f"Error aria2: {e}")
-            return False
+        except: return False
     
     def rpc(self, method, params=None):
         try:
@@ -210,12 +190,15 @@ class Aria2Downloader:
             if self.trackers: opts['bt-tracker'] = self.trackers
         return self.rpc("aria2.addUri", [[url], opts])
     
-    def add_torrent_file(self, file_path):
+    def add_torrent_blob(self, file_path):
         try:
             with open(file_path, "rb") as f:
                 encoded = base64.b64encode(f.read()).decode('utf-8')
+            
+            # AQUI ESTA LA MAGIA: Forzar trackers tambien en archivos .torrent
             opts = {"dir": DOWNLOAD_PATH, "bt-stop-timeout": "300"}
             if self.trackers: opts['bt-tracker'] = self.trackers
+            
             return self.rpc("aria2.addTorrent", [encoded, [], opts])
         except: return None
     
@@ -233,13 +216,16 @@ def format_size(size_bytes):
     else: return f"{size_bytes/1024**3:.2f} GB"
 
 def format_time(seconds):
+    if seconds <= 0: return "0s"
     if seconds < 60: return f"{int(seconds)}s"
     elif seconds < 3600: return f"{int(seconds//60)}m {int(seconds%60)}s"
     else: return f"{int(seconds//3600)}h {int((seconds%3600)//60)}m"
 
 def create_bar(percentage):
-    filled = int(percentage / 10) 
-    return '█' * filled + '░' * (10 - filled)
+    try:
+        filled = int(percentage / 10) 
+        return '█' * filled + '░' * (10 - filled)
+    except: return '░' * 10
 
 def split_file_sync(file_path, chunk_size=MAX_TG_SIZE):
     parts = []
@@ -295,7 +281,6 @@ class FastUploader:
             file_obj.seek(index * self.part_size)
             data = file_obj.read(self.part_size)
             if not data: return False
-            
             req = SaveBigFilePartRequest(self.file_id, index, self.total_parts, data) if self.is_big else SaveFilePartRequest(self.file_id, index, data)
             await self.client(req)
             async with self.lock:
@@ -353,13 +338,17 @@ async def wait_metadata(aria2, gid, user_id):
         if s.get('status') == 'error': return None
         if s.get('followedBy'): gid = s['followedBy'][0]; continue
         
+        # Si es un .torrent, a veces status='active' pero ya tiene metadata
         if s.get('bittorrent', {}).get('info', {}).get('name'):
              return {'name': s['bittorrent']['info']['name'], 'gid': gid}
         
-        if s.get('files'):
+        # Si ya está descargando archivos, tiene metadata
+        if s.get('files') and len(s['files']) > 0:
+             # Verificar que no sea solo el archivo .torrent de metadata
              path = s['files'][0]['path']
              if path and '[METADATA]' not in path:
                  return {'name': os.path.basename(path), 'gid': gid}
+                 
         await asyncio.sleep(1)
     return None
 
@@ -374,40 +363,49 @@ async def process(event, url_or_type, aria2):
 
     try:
         if url_or_type == "TG_FILE":
-            await msg.edit(f"**{STYLE['loading']} Bajnado .torrent...**", buttons=[Button.inline(f"{STYLE['cross']} Cancelar", data="cancel_task")])
+            await msg.edit(f"**{STYLE['loading']} Descargando .torrent...**", buttons=[Button.inline(f"{STYLE['cross']} Cancelar", data="cancel_task")])
             t_path = await event.download_media(file=os.path.join(DOWNLOAD_PATH, f"meta_{int(time.time())}.torrent"))
             if t_path and os.path.exists(t_path):
-                gid = aria2.add_torrent_file(t_path); is_torrent = True
+                gid = aria2.add_torrent_blob(t_path); is_torrent = True
                 try: os.remove(t_path)
                 except: pass
             else: await msg.edit(f"**{STYLE['error']} Error archivo**"); return
         else:
             url = url_or_type
             if url.endswith('.torrent') and url.startswith('http'):
-                await msg.edit(f"**{STYLE['loading']} Bajando .torrent web...**", buttons=[Button.inline(f"{STYLE['cross']} Cancelar", data="cancel_task")])
+                await msg.edit(f"**{STYLE['loading']} Descargando .torrent web...**", buttons=[Button.inline(f"{STYLE['cross']} Cancelar", data="cancel_task")])
                 t_path = download_torrent_file(url)
                 if t_path:
-                    gid = aria2.add_torrent_file(t_path); is_torrent = True
+                    gid = aria2.add_torrent_blob(t_path); is_torrent = True
                     try: os.remove(t_path)
                     except: pass
-                else: await msg.edit(f"**{STYLE['error']} Error enlace**"); return
+                else: await msg.edit(f"**{STYLE['error']} Error .torrent**"); return
             elif url.startswith('magnet'): gid = aria2.add_uri(url)
             else: gid = aria2.add_uri(url)
             
         if not gid: await msg.edit(f"**{STYLE['error']} Error Aria2**"); return
 
         dl_name = "Archivo"
-        if is_torrent or (isinstance(url_or_type, str) and url_or_type.startswith('magnet')):
-            await msg.edit(f"**{STYLE['loading']} Metadatos...**", buttons=[Button.inline(f"{STYLE['cross']} Cancelar", data="cancel_task")])
-            meta = await wait_metadata(aria2, gid, user_id)
-            if meta: gid = meta['gid']; dl_name = meta['name']
+        # Logica de Metadata
+        await msg.edit(f"**{STYLE['loading']} Buscando Peers...**", buttons=[Button.inline(f"{STYLE['cross']} Cancelar", data="cancel_task")])
+        meta = await wait_metadata(aria2, gid, user_id)
+        
+        if meta: 
+            gid = meta['gid']; dl_name = meta['name']
+        else:
+            # Si no hay metadata, pero es un magnet, fallamos.
+            # PERO si es un .torrent file, a veces aria2 empieza a descargar directo sin cambiar estado 'active'
+            # Damos una oportunidad
+            s = aria2.status(gid)
+            if s and s.get('status') == 'active':
+                dl_name = "Torrent (Sin nombre aun)"
             else:
-                if CANCEL_FLAGS.get(user_id): await msg.edit(f"**{STYLE['cancel']} CANCELADO**"); return
-                await msg.edit(f"**{STYLE['error']} Torrent Muerto**"); aria2.remove(gid); return
+                if CANCEL_FLAGS.get(user_id): await msg.edit(f"**{STYLE['cancel']} TAREA CANCELADA**"); return
+                await msg.edit(f"**{STYLE['error']} Torrent Muerto (Sin Peers)**"); aria2.remove(gid); return
 
         start_dl = time.time(); last_upd = 0
         while True:
-            if CANCEL_FLAGS.get(user_id): aria2.force_remove(gid); await msg.edit(f"**{STYLE['cancel']} CANCELADO**"); return
+            if CANCEL_FLAGS.get(user_id): aria2.force_remove(gid); await msg.edit(f"**{STYLE['cancel']} TAREA CANCELADA**"); return
             s = aria2.status(gid)
             if not s: await asyncio.sleep(1); continue
             if s.get('followedBy'): gid = s['followedBy'][0]; continue
@@ -416,12 +414,8 @@ async def process(event, url_or_type, aria2):
             
             done = int(s.get('completedLength', 0)); total = int(s.get('totalLength', 0)); speed = int(s.get('downloadSpeed', 0))
             if total > 0 and not db.check_quota(user_id, total): aria2.remove(gid); await msg.edit(f"**{STYLE['warn']} Excede cuota**"); return
-            
             if total > 0 and s.get('files'):
-                try: 
-                    # Buscar el archivo más grande
-                    main = max(s['files'], key=lambda x: int(x['length']))
-                    dl_name = os.path.basename(main['path'])
+                try: dl_name = os.path.basename(max(s['files'], key=lambda x: int(x['length']))['path'])
                 except: pass
 
             if time.time() - last_upd > 3:
@@ -447,7 +441,7 @@ async def process(event, url_or_type, aria2):
         loop = asyncio.get_running_loop()
         
         for f in all_files:
-            if CANCEL_FLAGS.get(user_id): await msg.edit(f"**{STYLE['cancel']} CANCELADO**"); return
+            if CANCEL_FLAGS.get(user_id): await msg.edit(f"**{STYLE['cancel']} TAREA CANCELADA**"); return
             if f['size'] > MAX_TG_SIZE:
                 await msg.edit(f"**{STYLE['split']} DIVIDIENDO...**\n`{f['name']}`", buttons=[Button.inline(f"{STYLE['cross']} Cancelar", data="cancel_task")])
                 parts = await loop.run_in_executor(None, split_file_sync, f['path'])
@@ -455,28 +449,32 @@ async def process(event, url_or_type, aria2):
             else: final_files.append(f)
         
         uploaded_bytes = 0
-        total_len = len(final_files)
-        
         for i, f in enumerate(final_files):
-            if CANCEL_FLAGS.get(user_id): await msg.edit(f"**{STYLE['cancel']} CANCELADO**"); return
-            f_num = f"[{i+1}/{total_len}]"
+            if CANCEL_FLAGS.get(user_id): await msg.edit(f"**{STYLE['cancel']} TAREA CANCELADA**"); return
+            f_num = f"[{i+1}/{len(final_files)}]"
             if await upload_file(client, chat_id, f['path'], msg, f['name'], f_num, user_id):
                 uploaded_bytes += f['size']
                 try: os.remove(f['path'])
                 except: pass
             else:
-                if CANCEL_FLAGS.get(user_id): await msg.edit(f"**{STYLE['cancel']} CANCELADO**"); return
+                if CANCEL_FLAGS.get(user_id): await msg.edit(f"**{STYLE['cancel']} TAREA CANCELADA**"); return
         
         if not CANCEL_FLAGS.get(user_id):
             db.add_usage(user_id, uploaded_bytes)
-            await msg.edit(f"**{STYLE['success']} FINALIZADO**\nArchivos: {total_len}\nTotal: {format_size(uploaded_bytes)}\nTiempo: {format_time(time.time() - start_dl)}")
+            await msg.edit(f"**{STYLE['success']} FINALIZADO**\nArchivos: {len(final_files)}\nTotal: {format_size(uploaded_bytes)}\nTiempo: {format_time(time.time() - start_dl)}")
 
     except Exception as e:
         try: await msg.edit(f"**{STYLE['error']} ERROR:** `{str(e)[:100]}`")
         except: pass
     finally:
         if gid: aria2.remove(gid)
-        cleanup_linux() # Limpieza final
+        for root, dirs, files in os.walk(DOWNLOAD_PATH, topdown=False):
+            for name in dirs:
+                try: os.rmdir(os.path.join(root, name))
+                except: pass
+            for name in files:
+                try: os.remove(os.path.join(root, name))
+                except: pass
 
 async def worker(queue, aria2):
     while True:
@@ -496,7 +494,7 @@ def get_user_keyboard(): return [[Button.text("/miplan"), Button.text("/support"
 async def main():
     try: import cryptg; crypt_msg = f"{STYLE['check']} Cryptg: ACTIVO"
     except: crypt_msg = f"{STYLE['warn']} Cryptg: FALTA"
-    print(f"\n{STYLE['title']}\n   {STYLE['rocket']} BOT v15.0 LINUX PURE\n   {crypt_msg}\n{STYLE['title']}\n")
+    print(f"\n{STYLE['title']}\n   {STYLE['rocket']} BOT v16.0 TITAN (LINUX)\n   {crypt_msg}\n{STYLE['title']}\n")
     
     aria2 = Aria2Downloader()
     if not aria2.is_running():
